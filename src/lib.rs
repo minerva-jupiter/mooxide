@@ -80,7 +80,6 @@ impl Plugin for Mooxide {
         names: PortNames::const_default(),
     }];
 
-
     const MIDI_INPUT: MidiConfig = MidiConfig::None;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
 
@@ -145,13 +144,4 @@ impl ClapPlugin for Mooxide {
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo];
 }
 
-impl Vst3Plugin for Mooxide {
-    const VST3_CLASS_ID: [u8; 16] = *b"Exactly16Chars!!";
-
-    // And also don't forget to change these categories
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
-        &[Vst3SubCategory::Fx, Vst3SubCategory::Dynamics];
-}
-
 nih_export_clap!(Mooxide);
-nih_export_vst3!(Mooxide);
