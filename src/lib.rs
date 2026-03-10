@@ -277,9 +277,10 @@ impl Plugin for Mooxide {
                     self.params.osc3_wave.value(),
                 );
 
-                osc1 * self.params.osc1_mix.value()
+                (osc1 * self.params.osc1_mix.value()
                     + osc2 * self.params.osc2_mix.value()
-                    + osc3 * self.params.osc3_mix.value()
+                    + osc3 * self.params.osc3_mix.value())
+                    * self.midi_note_velocity.next()
             };
             for sample in channel_samples {
                 *sample = displacement * util::db_to_gain_fast(gain);
