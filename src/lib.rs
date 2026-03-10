@@ -1,6 +1,5 @@
 use nih_plug::prelude::*;
 use std::f32::consts;
-use std::str::SplitAsciiWhitespace;
 use std::sync::Arc;
 
 // This is a shortened version of the gain example with most comments removed, check out
@@ -10,7 +9,7 @@ use std::sync::Arc;
 struct Mooxide {
     params: Arc<MooxideParams>,
     sample_rate: f32,
-    phase: f32,
+    phases: [f32; 3],
     midi_note_id: u8,
     midi_note_frequency: f32,
     midi_note_velocity: Smoother<f32>,
@@ -26,14 +25,51 @@ pub enum Waveform {
     Sawtooth,
 }
 
+#[derive(Enum, PartialEq, Clone, Copy)]
+pub enum Range {
+    #[name = "2"]
+    Two,
+    #[name = "4"]
+    Four,
+    #[name = "8"]
+    Eight,
+    #[name = "16"]
+    Sixteen,
+    #[name = "32"]
+    ThirtyTwo,
+}
+
 #[derive(Params)]
 struct MooxideParams {
     /// The parameter's ID is used to identify the parameter in the wrappred plugin API. As long as
     /// these IDs remain constant, you can rename and reorder these fields as you wish. The
     /// parameters are exposed to the host in the same order they were defined. In this case, this
     /// gain parameter is stored as linear gain while the values are displayed in decibels.
-    #[id = "osc_wave"]
-    pub wave: EnumParam<Waveform>,
+    #[id = "tune"]
+    pub tune: FloatParam,
+    #[id = "occ1_range"]
+    pub osc1_range: EnumParam<Range>,
+    #[id = "osc1_wave"]
+    pub osc1_wave: EnumParam<Waveform>,
+    #[id = "osc1_mix"]
+    pub osc1_mix: FloatParam,
+    #[id = "osc2_range"]
+    pub osc2_range: EnumParam<Range>,
+    #[id = "osc2_detune"]
+    pub osc2_detune: FloatParam,
+    #[id = "osc2_wave"]
+    pub osc2_wave: EnumParam<Waveform>,
+    #[id = "osc2_mix"]
+    pub osc2_mix: FloatParam,
+    #[id = "osc3_range"]
+    pub osc3_range: EnumParam<Range>,
+    #[id = "osc3_detune"]
+    pub osc3_detune: FloatParam,
+    #[id = "osc3_wave"]
+    pub osc3_wave: EnumParam<Waveform>,
+    #[id = "osc3_mix"]
+    pub osc3_mix: FloatParam,
+
     #[id = "gain"]
     pub gain: FloatParam,
 }
@@ -43,7 +79,7 @@ impl Default for Mooxide {
         Self {
             params: Arc::new(MooxideParams::default()),
             sample_rate: 1.0,
-            phase: 0.0,
+            phases: [0.0; 3],
             midi_note_id: 0,
             midi_note_frequency: 1.0,
             midi_note_velocity: Smoother::new(SmoothingStyle::Linear(5.0)),
@@ -54,43 +90,67 @@ impl Default for Mooxide {
 impl Default for MooxideParams {
     fn default() -> Self {
         Self {
-            gain: FloatParam::new(
-                "Gain",
-                -10.0,
+            gain: FloatParam::new("Gain", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            tune: FloatParam::new(
+                "Tune",
+                0.0,
                 FloatRange::Linear {
-                    min: -30.0,
-                    max: 0.0,
+                    min: -1.0,
+                    max: 1.0,
                 },
-            )
-            .with_smoother(SmoothingStyle::Linear(3.0))
-            .with_step_size(0.01)
-            .with_unit(" dB"),
-            wave: EnumParam::new("Waveform", Waveform::Sine),
+            ),
+            osc1_range: EnumParam::new("Range", Range::Sixteen),
+            osc1_wave: EnumParam::new("Waveform", Waveform::Sine),
+            osc1_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            osc2_range: EnumParam::new("Range", Range::Sixteen),
+            osc2_detune: FloatParam::new(
+                "Detune",
+                0.0,
+                FloatRange::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
+            ),
+            osc2_wave: EnumParam::new("Waveform", Waveform::Sine),
+            osc2_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            osc3_range: EnumParam::new("Range", Range::Sixteen),
+            osc3_detune: FloatParam::new(
+                "Detune",
+                0.0,
+                FloatRange::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
+            ),
+            osc3_wave: EnumParam::new("Waveform", Waveform::Sine),
+            osc3_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
         }
     }
 }
 
 impl Mooxide {
-    fn sin(&mut self, frequency: f32) -> f32 {
-        let sine = (self.phase * consts::TAU).sin();
-        self.update_phase(frequency);
-        sine
-    }
-    fn triangle(&mut self, frequency: f32) -> f32 {
-        let triangle = 2.0 * (1.0 - self.phase).abs() - 1.0;
-        self.update_phase(frequency);
-        triangle
-    }
-    fn sawtooth(&mut self, frequency: f32) -> f32 {
-        let sawtooth = self.phase * 2.0 - 1.0;
-        self.update_phase(frequency);
-        sawtooth
-    }
+    fn osc(&mut self, index: usize, freq: f32, wave: Waveform) -> f32 {
+        let phase = &mut self.phases[index];
+        let out = match wave {
+            Waveform::Sine => (*phase * consts::TAU).sin(),
+            Waveform::Triangle => 2.0 * (1.0 - 2.0 * (*phase - 0.5).abs()) - 1.0,
+            Waveform::Sawtooth => *phase * 2.0 - 1.0,
+        };
 
-    fn update_phase(&mut self, frequency: f32) {
-        self.phase += frequency / self.sample_rate;
-        if self.phase >= 1.0 {
-            self.phase -= 1.0;
+        // update phase
+        *phase += freq / self.sample_rate;
+        if *phase >= 1.0 {
+            *phase -= 1.0;
+        }
+        out
+    }
+    fn get_range_mult(&self, range: Range) -> f32 {
+        match range {
+            Range::Two => 0.5,
+            Range::Four => 1.0,
+            Range::Eight => 2.0,
+            Range::Sixteen => 4.0,
+            Range::ThirtyTwo => 8.0,
         }
     }
 }
@@ -152,7 +212,7 @@ impl Plugin for Mooxide {
     fn reset(&mut self) {
         // Reset buffers and envelopes here. This can be called from the audio thread and may not
         // allocate. You can remove this function if you do not need it.
-        self.phase = 0.0;
+        self.phases = [0.0; 3];
         self.midi_note_id = 0;
         self.midi_note_frequency = 1.0;
         self.midi_note_velocity.reset(0.0);
@@ -169,7 +229,7 @@ impl Plugin for Mooxide {
             let gain = self.params.gain.smoothed.next();
 
             // This plugin can be either triggered by MIDI or controleld by a parameter
-            let sine = {
+            let displacement = {
                 // Act on the next MIDI event
                 while let Some(event) = next_event {
                     if event.timing() > sample_id as u32 {
@@ -197,24 +257,32 @@ impl Plugin for Mooxide {
 
                     next_event = context.next_event();
                 }
+                let osc1 = self.osc(
+                    0,
+                    self.midi_note_frequency * self.get_range_mult(self.params.osc1_range.value()),
+                    self.params.osc1_wave.value(),
+                );
+                let osc2 = self.osc(
+                    1,
+                    self.midi_note_frequency
+                        * self.get_range_mult(self.params.osc2_range.value())
+                        * (1.0 + self.params.osc2_detune.value() * 0.01),
+                    self.params.osc2_wave.value(),
+                );
+                let osc3 = self.osc(
+                    2,
+                    self.midi_note_frequency
+                        * self.get_range_mult(self.params.osc3_range.value())
+                        * (1.0 + self.params.osc3_detune.value() * 0.01),
+                    self.params.osc3_wave.value(),
+                );
 
-                // This gain envelope prevents clicks with new notes and with released notes
-                let current_waveform = self.params.wave.value();
-                match current_waveform {
-                    Waveform::Sine => {
-                        self.sin(self.midi_note_frequency) * self.midi_note_velocity.next()
-                    }
-                    Waveform::Triangle => {
-                        self.triangle(self.midi_note_frequency) * self.midi_note_velocity.next()
-                    }
-                    Waveform::Sawtooth => {
-                        self.sawtooth(self.midi_note_frequency) * self.midi_note_velocity.next()
-                    }
-                    _ => self.sin(self.midi_note_frequency) * self.midi_note_velocity.next(),
-                }
+                osc1 * self.params.osc1_mix.value()
+                    + osc2 * self.params.osc2_mix.value()
+                    + osc3 * self.params.osc3_mix.value()
             };
             for sample in channel_samples {
-                *sample = sine * util::db_to_gain_fast(gain);
+                *sample = displacement * util::db_to_gain_fast(gain);
             }
         }
 
