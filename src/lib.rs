@@ -1,5 +1,4 @@
 use nih_plug::prelude::*;
-use std::f32::consts;
 use std::sync::Arc;
 
 // This is a shortened version of the gain example with most comments removed, check out
@@ -17,12 +16,20 @@ struct Mooxide {
 
 #[derive(Enum, PartialEq, Clone, Copy)]
 pub enum Waveform {
-    #[name = "Sine"]
-    Sine,
     #[name = "Triangle"]
     Triangle,
+    #[name = "Triangle-Sawtooth"]
+    TriangleSawtooth,
     #[name = "Sawtooth"]
     Sawtooth,
+    #[name = "ReverseSawtooth"]
+    ReverseSawtooth,
+    #[name = "Square"]
+    Square,
+    #[name = "Wide-Pulse"]
+    WidePulse,
+    #[name = "Narrow-Pulse"]
+    NarrowPulse,
 }
 
 #[derive(Enum, PartialEq, Clone, Copy)]
@@ -100,7 +107,7 @@ impl Default for MooxideParams {
                 },
             ),
             osc1_range: EnumParam::new("Range", Range::Sixteen),
-            osc1_wave: EnumParam::new("Waveform", Waveform::Sine),
+            osc1_wave: EnumParam::new("Waveform", Waveform::Triangle),
             osc1_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
             osc2_range: EnumParam::new("Range", Range::Sixteen),
             osc2_detune: FloatParam::new(
@@ -111,7 +118,7 @@ impl Default for MooxideParams {
                     max: 1.0,
                 },
             ),
-            osc2_wave: EnumParam::new("Waveform", Waveform::Sine),
+            osc2_wave: EnumParam::new("Waveform", Waveform::Triangle),
             osc2_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
             osc3_range: EnumParam::new("Range", Range::Sixteen),
             osc3_detune: FloatParam::new(
@@ -122,7 +129,7 @@ impl Default for MooxideParams {
                     max: 1.0,
                 },
             ),
-            osc3_wave: EnumParam::new("Waveform", Waveform::Sine),
+            osc3_wave: EnumParam::new("Waveform", Waveform::Triangle),
             osc3_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
         }
     }
@@ -131,10 +138,23 @@ impl Default for MooxideParams {
 impl Mooxide {
     fn osc(&mut self, index: usize, freq: f32, wave: Waveform) -> f32 {
         let phase = &mut self.phases[index];
+        fn triangle(phase: f32) -> f32 {
+            1.0 - 2.0 * (phase + 0.75).fract().abs()
+        }
+        fn sawtooth(phase: f32) -> f32 {
+            2.0 * phase - 1.0
+        }
+        fn square(phase: f32, width: f32) -> f32 {
+            (phase < width) as i32 as f32 * 2.0 - 1.0
+        }
         let out = match wave {
-            Waveform::Sine => (*phase * consts::TAU).sin(),
-            Waveform::Triangle => 2.0 * (1.0 - 2.0 * (*phase - 0.5).abs()) - 1.0,
-            Waveform::Sawtooth => *phase * 2.0 - 1.0,
+            Waveform::Triangle => triangle(*phase),
+            Waveform::TriangleSawtooth => 0.5 * triangle(*phase) + 0.5 * sawtooth(*phase),
+            Waveform::Sawtooth => sawtooth(*phase),
+            Waveform::ReverseSawtooth => 1.0 - *phase * 2.0,
+            Waveform::Square => square(*phase, 0.5),
+            Waveform::WidePulse => square(*phase, 0.25),
+            Waveform::NarrowPulse => square(*phase, 0.125),
         };
 
         // update phase
