@@ -44,6 +44,15 @@ pub enum Range {
     Sixteen,
     #[name = "32"]
     ThirtyTwo,
+    #[name = "64"]
+    SixtyFour,
+}
+#[derive(Enum, PartialEq, Clone, Copy)]
+pub enum NoiseKind {
+    #[name = "White"]
+    White,
+    #[name = "Pink"]
+    Pink,
 }
 
 #[derive(Params)]
@@ -77,6 +86,11 @@ struct MooxideParams {
     #[id = "osc3_mix"]
     pub osc3_mix: FloatParam,
 
+    #[id = "noise"]
+    pub noise: EnumParam<NoiseKind>,
+    #[id = "noise_mix"]
+    pub noise_mix: FloatParam,
+
     #[id = "gain"]
     pub gain: FloatParam,
 }
@@ -109,7 +123,7 @@ impl Default for MooxideParams {
             osc1_range: EnumParam::new("Range", Range::Sixteen),
             osc1_wave: EnumParam::new("Waveform", Waveform::Triangle),
             osc1_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            osc2_range: EnumParam::new("Range", Range::Sixteen),
+            osc2_range: EnumParam::new("Range", Range::ThirtyTwo),
             osc2_detune: FloatParam::new(
                 "Detune",
                 0.0,
@@ -120,7 +134,7 @@ impl Default for MooxideParams {
             ),
             osc2_wave: EnumParam::new("Waveform", Waveform::Triangle),
             osc2_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            osc3_range: EnumParam::new("Range", Range::Sixteen),
+            osc3_range: EnumParam::new("Range", Range::ThirtyTwo),
             osc3_detune: FloatParam::new(
                 "Detune",
                 0.0,
@@ -131,6 +145,9 @@ impl Default for MooxideParams {
             ),
             osc3_wave: EnumParam::new("Waveform", Waveform::Triangle),
             osc3_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+
+            noise: EnumParam::new("Noise", NoiseKind::White),
+            noise_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
         }
     }
 }
@@ -166,11 +183,25 @@ impl Mooxide {
     }
     fn get_range_mult(&self, range: Range) -> f32 {
         match range {
-            Range::Two => 0.5,
-            Range::Four => 1.0,
-            Range::Eight => 2.0,
-            Range::Sixteen => 4.0,
-            Range::ThirtyTwo => 8.0,
+            Range::Two => 0.25,
+            Range::Four => 0.5,
+            Range::Eight => 1.0,
+            Range::Sixteen => 2.0,
+            Range::ThirtyTwo => 4.0,
+            Range::SixtyFour => 8.0,
+        }
+    }
+
+    fn noise(&self, kind: NoiseKind) -> f32 {
+        match kind {
+            NoiseKind::White => rand::random::<f32>() * 2.0 - 1.0,
+            NoiseKind::Pink => {
+                let mut sum = 0.0;
+                for _ in 0..10 {
+                    sum += rand::random::<f32>() * 2.0 - 1.0;
+                }
+                sum / 10.0
+            }
         }
     }
 }
@@ -297,9 +328,12 @@ impl Plugin for Mooxide {
                     self.params.osc3_wave.value(),
                 );
 
+                let noise = self.noise(self.params.noise.value());
+
                 (osc1 * self.params.osc1_mix.value()
                     + osc2 * self.params.osc2_mix.value()
-                    + osc3 * self.params.osc3_mix.value())
+                    + osc3 * self.params.osc3_mix.value()
+                    + noise * self.params.noise_mix.value())
                     * self.midi_note_velocity.next()
             };
             for sample in channel_samples {
