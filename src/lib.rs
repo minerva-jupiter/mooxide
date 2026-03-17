@@ -12,6 +12,8 @@ struct Mooxide {
     midi_note_id: u8,
     midi_note_frequency: f32,
     midi_note_velocity: Smoother<f32>,
+    filter_biquad: [f32; 4],
+    note_time: u32,
 }
 
 #[derive(Enum, PartialEq, Clone, Copy)]
@@ -91,6 +93,25 @@ struct MooxideParams {
     #[id = "noise_mix"]
     pub noise_mix: FloatParam,
 
+    #[id = "filter_cutoff"]
+    pub filter_cutoff: FloatParam,
+    #[id = "filter_emphasis"]
+    pub filter_emphasis: FloatParam,
+    #[id = "filter_contour"]
+    pub filter_contour: FloatParam,
+    #[id = "filter_attack"]
+    pub filter_attack: FloatParam,
+    #[id = "filter_decay"]
+    pub filter_decay: FloatParam,
+    #[id = "filter_sustain"]
+    pub filter_sustain: FloatParam,
+    #[id = "contour_attack"]
+    pub contour_attack: FloatParam,
+    #[id = "contour_decay"]
+    pub contour_decay: FloatParam,
+    #[id = "contour_sustain"]
+    pub contour_sustain: FloatParam,
+
     #[id = "gain"]
     pub gain: FloatParam,
 }
@@ -104,6 +125,8 @@ impl Default for Mooxide {
             midi_note_id: 0,
             midi_note_frequency: 1.0,
             midi_note_velocity: Smoother::new(SmoothingStyle::Linear(5.0)),
+            filter_biquad: [0.0; 4],
+            note_time: 0,
         }
     }
 }
@@ -148,6 +171,71 @@ impl Default for MooxideParams {
 
             noise: EnumParam::new("Noise", NoiseKind::White),
             noise_mix: FloatParam::new("Mix", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+
+            filter_cutoff: FloatParam::new(
+                "Filter Cutoff Frequency",
+                0.0,
+                FloatRange::Linear {
+                    min: -5.0,
+                    max: 5.0,
+                },
+            ),
+            filter_emphasis: FloatParam::new(
+                "Filter Emphasis",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            filter_contour: FloatParam::new(
+                "Filter Contour",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            filter_attack: FloatParam::new(
+                "Filter Attack Time",
+                0.6,
+                FloatRange::Skewed {
+                    min: 0.001,
+                    max: 20.0,
+                    factor: FloatRange::skew_factor(-0.9),
+                },
+            ),
+            filter_decay: FloatParam::new(
+                "Filter Decay Time",
+                0.6,
+                FloatRange::Skewed {
+                    min: 0.001,
+                    max: 20.0,
+                    factor: FloatRange::skew_factor(-0.9),
+                },
+            ),
+            filter_sustain: FloatParam::new(
+                "Filter Sustain Level",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            contour_attack: FloatParam::new(
+                "Contour Attack Time",
+                0.6,
+                FloatRange::Skewed {
+                    min: 0.001,
+                    max: 20.0,
+                    factor: FloatRange::skew_factor(-0.9),
+                },
+            ),
+            contour_decay: FloatParam::new(
+                "Contour Decay Time",
+                0.6,
+                FloatRange::Skewed {
+                    min: 0.001,
+                    max: 20.0,
+                    factor: FloatRange::skew_factor(-0.9),
+                },
+            ),
+            contour_sustain: FloatParam::new(
+                "Contour Sustain Level",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
         }
     }
 }
@@ -203,6 +291,46 @@ impl Mooxide {
                 sum / 10.0
             }
         }
+    }
+
+    fn envelope(&self) -> f32 {
+        let time = self.note_time as f32 / self.sample_rate;
+        let attack_phase = (time / self.params.contour_attack.value()).clamp(0.0, 1.0);
+        let decay_phase = ((time - self.params.contour_attack.value())
+            / self.params.contour_decay.value())
+        .clamp(0.0, 1.0);
+        attack_phase * (1.0 - decay_phase) + (self.params.contour_sustain.value() * decay_phase)
+    }
+
+    fn filter_envelope(&self) -> f32 {
+        let time = self.note_time as f32 / self.sample_rate;
+        let attack_phase = (time / self.params.filter_attack.value()).clamp(0.0, 1.0);
+        let decay_phase = ((time - self.params.filter_attack.value())
+            / self.params.filter_decay.value())
+        .clamp(0.0, 1.0);
+        attack_phase * (1.0 - decay_phase) + (self.params.filter_sustain.value() * decay_phase)
+    }
+
+    fn filter(&mut self, input: f32) -> f32 {
+        // https://www.utsbox.com/?page_id=523
+        let openture = self.midi_note_frequency
+            * (2.0 + self.filter_envelope() + (self.params.filter_cutoff.value() / 5.0));
+        let omega = 2.0 * std::f32::consts::PI * openture / self.sample_rate;
+        let alpha = omega.sin() / 2.0 / self.params.filter_emphasis.value();
+        let a0 = 1.0 + alpha;
+        let a1 = -2.0 * omega.cos();
+        let a2 = 1.0 - alpha;
+        let b0 = (1.0 - omega.cos()) / 2.0;
+        let b1 = 1.0 - omega.cos();
+        let b2 = (1.0 - omega.cos()) / 2.0;
+        let y = b0 / a0 * input + b1 / a0 * self.filter_biquad[0] + b2 / a0 * self.filter_biquad[1]
+            - a1 / a0 * self.filter_biquad[2]
+            - a2 / a0 * self.filter_biquad[3];
+        self.filter_biquad[1] = self.filter_biquad[0];
+        self.filter_biquad[0] = input;
+        self.filter_biquad[3] = self.filter_biquad[2];
+        self.filter_biquad[2] = y;
+        y
     }
 }
 
@@ -293,6 +421,8 @@ impl Plugin for Mooxide {
                             self.midi_note_frequency = util::midi_note_to_freq(note);
                             self.midi_note_velocity
                                 .set_target(self.sample_rate, velocity);
+                            self.filter_biquad = [0.0; 4];
+                            self.note_time = 0;
                         }
                         NoteEvent::NoteOff { note, .. } if note == self.midi_note_id => {
                             self.midi_note_velocity.set_target(self.sample_rate, 0.0);
@@ -330,15 +460,18 @@ impl Plugin for Mooxide {
 
                 let noise = self.noise(self.params.noise.value());
 
-                (osc1 * self.params.osc1_mix.value()
-                    + osc2 * self.params.osc2_mix.value()
-                    + osc3 * self.params.osc3_mix.value()
-                    + noise * self.params.noise_mix.value())
-                    * self.midi_note_velocity.next()
+                self.filter(
+                    (osc1 * self.params.osc1_mix.value()
+                        + osc2 * self.params.osc2_mix.value()
+                        + osc3 * self.params.osc3_mix.value()
+                        + noise * self.params.noise_mix.value())
+                        * self.midi_note_velocity.next(),
+                ) * self.envelope()
             };
             for sample in channel_samples {
                 *sample = displacement * util::db_to_gain_fast(gain);
             }
+            self.note_time += 1;
         }
 
         ProcessStatus::KeepAlive
