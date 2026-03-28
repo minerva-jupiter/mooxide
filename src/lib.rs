@@ -438,21 +438,23 @@ impl Plugin for Mooxide {
 
                     next_event = context.next_event();
                 }
+                let tuned_frequency = self.midi_note_frequency
+                    * (2.0f64.powf(self.params.tune.value() as f64 / 12.0) as f32);
                 let osc1 = self.osc(
                     0,
-                    self.midi_note_frequency * self.get_range_mult(self.params.osc1_range.value()),
+                    tuned_frequency * self.get_range_mult(self.params.osc1_range.value()),
                     self.params.osc1_wave.value(),
                 );
                 let osc2 = self.osc(
                     1,
-                    self.midi_note_frequency
+                    tuned_frequency
                         * self.get_range_mult(self.params.osc2_range.value())
                         * (1.0 + self.params.osc2_detune.value() * 0.01),
                     self.params.osc2_wave.value(),
                 );
                 let osc3 = self.osc(
                     2,
-                    self.midi_note_frequency
+                    tuned_frequency
                         * self.get_range_mult(self.params.osc3_range.value())
                         * (1.0 + self.params.osc3_detune.value() * 0.01),
                     self.params.osc3_wave.value(),
