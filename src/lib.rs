@@ -183,7 +183,10 @@ impl Default for MooxideParams {
             filter_emphasis: FloatParam::new(
                 "Filter Emphasis",
                 0.5,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
+                FloatRange::Linear {
+                    min: 0.01,
+                    max: 1.0,
+                },
             ),
             filter_contour: FloatParam::new(
                 "Filter Contour",
@@ -315,7 +318,8 @@ impl Mooxide {
         // https://www.utsbox.com/?page_id=523
         let openture = self.midi_note_frequency
             * (2.0 + self.filter_envelope() + (self.params.filter_cutoff.value() / 5.0));
-        let omega = 2.0 * std::f32::consts::PI * openture / self.sample_rate;
+        let omega = (2.0 * std::f32::consts::PI * openture / self.sample_rate)
+            .clamp(0.01, std::f32::consts::PI - 0.01);
         let alpha = omega.sin() / 2.0 / self.params.filter_emphasis.value();
         let a0 = 1.0 + alpha;
         let a1 = -2.0 * omega.cos();
@@ -470,8 +474,9 @@ impl Plugin for Mooxide {
                         * self.midi_note_velocity.next(),
                 ) * self.envelope()
             };
+            let output = displacement * util::db_to_gain_fast(gain);
             for sample in channel_samples {
-                *sample = displacement * util::db_to_gain_fast(gain);
+                *sample = output.clamp(-1.0, 1.0);
             }
             self.note_time += 1;
         }
